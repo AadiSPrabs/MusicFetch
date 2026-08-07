@@ -1,9 +1,10 @@
-# MusicFetch — self-hosted single-song music downloader
+# MusicFetch — self-hosted music downloader
 
-Search, download, tag, and organize **single songs** into a Jellyfin-ready
-library, controlled from **Telegram** and a **REST API**. Self-hosted, no
-accounts, no ads — just pick a track and it lands on disk as
-`Artist/Album/Song.m4a` with proper metadata, embedded cover art, and lyrics.
+Search, download, tag, and organize **single songs — or entire albums and
+playlists** — into a Jellyfin-ready library, controlled from **Telegram** and
+a **REST API**. Self-hosted, no accounts, no ads — just pick a track or
+paste a link and it lands on disk as `Artist/Album/Song.m4a` with proper
+metadata, embedded cover art, and lyrics.
 
 ```
 search / paste a link
@@ -22,8 +23,8 @@ search / paste a link
 
 ## What it is
 
-MusicFetch is a Lidarr-style service narrowed to the one thing that matters:
-**a single song, downloaded in full, tagged correctly, filed correctly.**
+MusicFetch is a Lidarr-style service: **any track — a single song or a whole
+album/playlist — downloaded in full, tagged correctly, filed correctly.**
 
 - **Dual engine search** — results from JioSaavn (320 kbps AAC, no auth) and
   YouTube Music (yt-dlp, ~128 kbps AAC) are merged into one list; each
