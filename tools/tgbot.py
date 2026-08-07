@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SymphonyDL Telegram bot — thin bridge between Telegram DMs and the
+"""MusicFetch Telegram bot — thin bridge between Telegram DMs and the
 MusicFetch API on 127.0.0.1:8090.
 
 Stdlib-only transport (urllib long-poll on getUpdates). One thread per
@@ -262,7 +262,7 @@ def flow_status(chat: int):
 
 
 HELP = (
-    "<b>SymphonyDL</b> 🎵\n\n"
+    "<b>MusicFetch</b> 🎵\n\n"
     "• Paste a YouTube / YouTube Music / Spotify link (track, album or playlist) — "
     "I resolve and download everything.\n"
     "• <code>search &lt;query&gt;</code> — find tracks\n"

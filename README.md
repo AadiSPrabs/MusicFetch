@@ -16,7 +16,7 @@ search / paste a link
 │  (~128 AAC)     │   │  cover embed         │   │   folder.jpg        │
 └─────────────────┘   └──────────────────────┘   └─────────────────────┘
         │                                                │
-        └── controlled by: Telegram bot (@SymphonyDL) ◄──┘
+        └── controlled by: Telegram bot ◄──┘
                            REST API (127.0.0.1:8090)
 ```
 
@@ -105,7 +105,20 @@ All configuration lives in one `config.yaml` (template: `config.example.yaml`):
 
 ## Usage
 
-### Telegram (@SymphonyDL)
+### Telegram bot (easiest)
+
+The bot is the friendliest front-end — search, pick, done. If you don't
+already have a bot, make one in two minutes:
+
+1. Message **@BotFather** on Telegram → `/newbot` → pick a name and handle
+   → copy the token it gives you.
+2. Put the token in `config.yaml` → `telegram_bot.token`.
+3. Add your chat ID to `telegram_bot.allowed_chats` — message
+   [@userinfobot](https://t.me/userinfobot) to see your ID, or run the bot
+   and read it from the log. Only allowlisted chats get served.
+4. Run `.venv/bin/python tools/tgbot.py`.
+
+Then in chat:
 
 - **Paste a link** — YouTube / YouTube Music / Spotify track, album, or
   playlist. MusicFetch resolves it and downloads everything.
@@ -116,14 +129,18 @@ All configuration lives in one `config.yaml` (template: `config.example.yaml`):
 
 Single tracks are also sent back to you as an audio message after they land.
 
-### REST API
+### REST API (no bot needed)
+
+The bot is just a front-end — everything it does is one HTTP call away, so
+you can drive MusicFetch from `curl`, scripts, cron jobs, or your own app
+(Jellyfin clients, web UIs, whatever):
 
 ```bash
 # search
 curl -X POST localhost:8090/api/search -d '{"query":"LiSA ADAMAS"}'
 # → {"job_id":"a1b2c3d4e5f6","status":"queued"}
 
-# check the job (candidates in result)
+# poll the job — candidates land in result
 curl localhost:8090/api/job/a1b2c3d4e5f6
 
 # download a candidate (copy the pick object from the search result)
@@ -153,8 +170,13 @@ Full endpoint reference: [docs/api.md](docs/api.md).
 
 ## Disclaimer
 
-MusicFetch is for personal, non-commercial use. It uses JioSaavn's public
-API (including its 320 kbps CDN endpoint) and YouTube Music via yt-dlp; the
-quality suffixes and endpoints these rely on can change or break at any time
-— engines are source-pluggable for exactly this reason. Respect the source
-services' terms and the copyright of the music you download.
+**This project is published for educational purposes only.** It exists to
+demonstrate API design, multi-engine search/fallback architecture, async job
+queues, link resolution, and audio metadata pipelines. It is not affiliated
+with, endorsed by, or connected to JioSaavn, Spotify, YouTube, or Google.
+
+Use it only for personal, non-commercial listening. Respect the source
+services' terms of service and the copyright of the music you download —
+do not redistribute downloaded files. The quality suffixes, endpoints, and
+APIs these engines rely on are unofficial and can change or break at any
+time; engines are source-pluggable for exactly this reason.

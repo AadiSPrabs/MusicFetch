@@ -127,3 +127,10 @@ Lesson encoded in the design: **sources churn monthly**. The owned layer —
 naming, tagging, lyrics, API, bot — works regardless of which source is
 alive, and adding a new source is one new `engines/<name>.py` + a config
 line.
+
+> **Educational note:** this document describes unofficial, reverse-engineered
+> aspects of third-party services (JioSaavn's API quality tiers, Spotify's
+> embed page) for educational purposes. They exist here to show how
+> source-pluggable download architectures are built — not to encourage
+> circumventing anyone's terms of service. Use responsibly, personally, and
+> non-commercially.
