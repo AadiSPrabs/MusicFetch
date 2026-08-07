@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn>=0.27
+PyYAML>=6.0
+requests>=2.31
+mutagen>=1.47
+pycryptodomex>=3.19
+yt-dlp>=2024.4.9

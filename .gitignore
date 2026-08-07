@@ -1,0 +1,11 @@
+# secrets — never commit the real config
+config.yaml
+
+# runtime / scratch
+.venv/
+__pycache__/
+*.pyc
+staging/
+
+# stale internal research notes (superseded by docs/)
+PLAN.md

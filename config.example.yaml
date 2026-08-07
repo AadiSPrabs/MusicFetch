@@ -1,0 +1,34 @@
+# MusicFetch configuration
+# Copy to config.yaml and adjust. config.yaml is gitignored (it holds secrets).
+
+# Engine order: jiosaavn first (public API, no auth, 320kbps AAC full-length),
+# youtube_music fallback (yt-dlp, ~128kbps AAC, covers JP/niche/regional).
+
+jiosaavn:
+  staging_dir: /opt/musicfetch/staging
+
+youtube_music:
+  staging_dir: /opt/musicfetch/staging
+
+engine:
+  order: [jiosaavn, youtube_music]
+
+output:
+  root: /mnt/hdd/media/music2test
+  # {artist}/{album}/{title} — multi-artist kept as "A; B" per library convention
+  unknown_album: Unknown Album
+
+postprocess:
+  musicbrainz: true
+  lyrics: true
+  cover: true
+  musicbrainz_ua: "MusicFetch/0.1 ( https://github.com/AadiSPrabs )"
+
+api:
+  host: 127.0.0.1
+  port: 8090
+  token: ""   # optional; if set, clients must send X-API-Key
+
+telegram_bot:
+  token: ""   # BotFather token for your bot
+  allowed_chats: []   # owner allowlist; add your telegram chat ids
