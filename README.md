@@ -94,10 +94,14 @@ Production (systemd, both services, reboot-safe): see
 
 All configuration lives in one `config.yaml` (template: `config.example.yaml`):
 
+> **First run:** set `output.root` to where you want music saved (e.g. `~/Music`)
+> — the example file carries a placeholder. `staging_dir` is a scratch area
+> that gets auto-created; you can leave it alone.
+
 | Key | Meaning |
 |---|---|
 | `engine.order` | Download-source priority, e.g. `[jiosaavn, youtube_music]` |
-| `output.root` | Library root; files land as `{root}/{Artist}/{Album}/{Song}.m4a` |
+| `output.root` | **Change this first** — where downloads land: `{root}/{Artist}/{Album}/{Song}.m4a` |
 | `postprocess.*` | Toggles for MusicBrainz / lyrics / cover steps |
 | `api.host` / `api.port` | REST bind address (localhost by default) |
 | `api.token` | Optional API key — if set, clients must send `X-API-Key` |

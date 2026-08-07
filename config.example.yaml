@@ -5,6 +5,7 @@
 # youtube_music fallback (yt-dlp, ~128kbps AAC, covers JP/niche/regional).
 
 jiosaavn:
+  # scratch space during download, auto-created — safe to leave as-is
   staging_dir: /opt/musicfetch/staging
 
 youtube_music:
@@ -14,7 +15,10 @@ engine:
   order: [jiosaavn, youtube_music]
 
 output:
-  root: /mnt/hdd/media/music2test
+  # ★ CHANGE THIS FIRST — where finished songs land.
+  # Any path works (e.g. ~/Music). Files are filed as:
+  #   {root}/{Artist}/{Album}/{Title}.m4a
+  root: /path/to/your/music/folder
   # {artist}/{album}/{title} — multi-artist kept as "A; B" per library convention
   unknown_album: Unknown Album
 
