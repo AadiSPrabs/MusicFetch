@@ -14,6 +14,7 @@ import html
 import json
 import logging
 import re
+import subprocess
 import threading
 import time
 import urllib.error
@@ -121,12 +122,86 @@ def fmt_dur(s) -> str:
         return "?:??"
 
 
+_BADGES = {"jiosaavn": "[JS 320]", "youtube_music": "[YT 128]", "qbit": "[FLAC]"}
+
+
 def fmt_pick(p: dict) -> str:
-    badge = "[JS]" if p.get("source") == "jiosaavn" else "[YT]"
+    src = p.get("source")
+    badge = _BADGES.get(src, f"[{html.escape(str(src or '?'))}]")
     title = html.escape(p.get("title") or "?")
     artist = html.escape(p.get("artist") or "?")
     album = html.escape(p.get("album") or "")
-    return f"{badge} <b>{artist}</b> — {title} ({fmt_dur(p.get('duration'))})" + (f" · {album}" if album else "")
+    dur = fmt_dur(p.get("duration")) if p.get("duration") else "?:??"
+    out = f"{badge} <b>{artist}</b> — {title} ({dur})"
+    if album:
+        out += f" · {album}"
+    if src == "qbit":
+        if p.get("seeders") is not None:
+            out += f" · 🌱{p['seeders']}"
+        if p.get("size_mb"):
+            out += f" · {p['size_mb']}MB"
+    return out
+
+
+def _btn(p: dict, n: int) -> str:
+    """Short button label for a candidate."""
+    if p.get("source") == "qbit":
+        s = f"{n}. [FLAC] {p.get('title') or '?'}"
+        if p.get("seeders") is not None:
+            s += f" · {p['seeders']}🌱"
+        return s[:64]
+    return f"{n}. {(p.get('artist') or '?')} — {p.get('title') or '?'}"[:64]
+
+
+def probe(path) -> str:
+    """Honest, compact quality summary of the delivered file (ffprobe)."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-show_entries",
+             "format=format_name,bit_rate:stream=codec_name,sample_rate,bits_per_raw_sample",
+             "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=25)
+        j = json.loads(r.stdout or "{}")
+    except Exception:
+        return ""
+    fmt = (j.get("format") or {}).get("format_name", "")
+    st = (j.get("streams") or [{}])[0]
+    codec = st.get("codec_name") or ""
+    sr = st.get("sample_rate")
+    bits = st.get("bits_per_raw_sample")
+    br = (j.get("format") or {}).get("bit_rate") or st.get("bit_rate")
+    try:
+        br_k = f"{int(br) // 1000}k" if br else ""
+    except (TypeError, ValueError):
+        br_k = ""
+    if "flac" in fmt:
+        q = "FLAC"
+        if sr:
+            q += f" {float(sr) / 1000:.1f}kHz"
+        if bits:
+            q += f"/{bits}bit"
+        return q
+    if codec:
+        return codec.upper() + (f" {br_k}" if br_k else "")
+    return br_k or fmt or ""
+
+
+def fmt_attempts(attempts) -> str:
+    """Delivery trail: 'ytmusic ✘ (403) → qbit ✔ FLAC fallback'."""
+    if not attempts:
+        return ""
+    bits = []
+    for a in attempts:
+        src = str(a.get("source") or "?")
+        if a.get("status") == "ok":
+            note = f" ({a['note']})" if a.get("note") else ""
+            bits.append(f"{src} ✔{note}")
+        else:
+            err = str(a.get("error") or "failed").strip()
+            # trim the noisy yt-dlp traceback tail to the first real message
+            bits.append(f"{src} ✘ {err[:70]}")
+    return " → ".join(bits)
 
 
 # -- flows ----------------------------------------------------------------
@@ -143,8 +218,9 @@ def flow_search(chat: int, query: str):
         say(chat, f"❌ no results for <i>{html.escape(query)}</i>")
         return
     seen, n = set(), 0
-    lines = ["<b>Results</b> — reply <code>download N</code> to grab one:"]
+    lines = ["<b>Results</b> — <i>tap a button to download</i> (or reply <code>download N</code>):"]
     store = {}
+    rows = []
     for c in j["result"]["candidates"][:15]:
         key = ((c.get("artist") or "").lower(), (c.get("title") or "").lower())
         if key in seen:
@@ -153,10 +229,11 @@ def flow_search(chat: int, query: str):
         n += 1
         store[n] = c
         lines.append(f"{n}. {fmt_pick(c)}")
-        if n >= 10:
+        rows.append([{"text": _btn(c, n), "callback_data": f"dl:{n}"}])
+        if n >= 12:
             break
     _picks[chat] = store
-    say(chat, "\n".join(lines))
+    say(chat, "\n".join(lines), reply_markup=json.dumps({"inline_keyboard": rows}))
 
 
 def flow_download(chat: int, n: int):
@@ -173,18 +250,32 @@ def flow_download(chat: int, n: int):
         return
     j = poll_job(jid)
     res = j.get("result") or {}
+    tr = fmt_attempts(res.get("attempts"))
     if j["status"] == "done" and res.get("output"):
         out = res["output"]
-        say(chat, f"✅ saved → <code>{html.escape(out)}</code>"
-                  + (f"\n🎤 lyrics: {'yes' if res.get('lyrics') else 'no'} · 🖼 cover: {'yes' if res.get('cover') else 'no'}"
-                     if "lyrics" in res else ""))
+        qual = probe(out)
+        msg = f"✅ {fmt_pick(pick)}"
+        if qual:
+            msg += f"\n🎧 <b>{html.escape(qual)}</b>"
+        extra = []
+        if "lyrics" in res:
+            extra.append(f"lyrics {'yes' if res['lyrics'] else 'no'}")
+        if "cover" in res:
+            extra.append(f"cover {'yes' if res['cover'] else 'no'}")
+        if extra:
+            msg += f" · ({', '.join(extra)})"
+        if tr:
+            msg += f"\n↪️ {html.escape(tr)}"
+        msg += f"\n<code>{html.escape(out)}</code>"
+        say(chat, msg)
         try:
             if Path(out).stat().st_size < 50 * 1024 * 1024:
                 send_audio(chat, out, f"{pick.get('artist')} — {pick.get('title')}")
         except OSError:
             pass
     else:
-        say(chat, f"❌ {html.escape(str(j.get('error') or 'download failed'))}")
+        say(chat, f"❌ {html.escape(str(j.get('error') or 'download failed'))}"
+                 + (f"\n↪️ {html.escape(tr)}" if tr else ""))
 
 
 def flow_link(chat: int, url: str):
@@ -211,6 +302,12 @@ def flow_link(chat: int, url: str):
         if "cover" in res:
             extra.append(f"cover {'yes' if res['cover'] else 'no'}")
         msg = f"✅ <b>{art} — {tit}</b>" + (f" ({', '.join(extra)})" if extra else "")
+        qual = probe(out)
+        tra = fmt_attempts(res.get("attempts"))
+        if qual:
+            msg += f" · 🎧 <b>{html.escape(qual)}</b>"
+        if tra:
+            msg += f"\n↪️ {html.escape(tra)}"
         msg += f"\n<code>{html.escape(out)}</code>"
         say(chat, msg)
         try:
@@ -303,13 +400,34 @@ def main():
     offset = 0
     while True:
         try:
-            upd = tg("getUpdates", offset=offset, timeout=25, allowed_updates=["message"])
+            upd = tg("getUpdates", offset=offset, timeout=25,
+                     allowed_updates=["message", "callback_query"])
         except Exception as exc:
             log.warning("getUpdates error: %s", exc)
             time.sleep(3)
             continue
         for u in upd.get("result", []):
             offset = max(offset, u["update_id"] + 1)
+            if "callback_query" in u:
+                cq = u["callback_query"]
+                chat_id = ((cq.get("message") or {}).get("chat") or {}).get("id")
+                cid = cq.get("id")
+                if cid:
+                    try:
+                        tg("answerCallbackQuery", callback_query_id=cid)
+                    except Exception:
+                        pass
+                if chat_id is None:
+                    continue
+                if chat_id not in ALLOWED:
+                    say(chat_id, "❌ Not authorized.")
+                    continue
+                m = re.match(r"^dl:(\d+)$", cq.get("data") or "")
+                if m:
+                    threading.Thread(target=flow_download,
+                                      args=(chat_id, int(m.group(1))),
+                                      daemon=True).start()
+                continue
             msg = u.get("message") or {}
             chat_id = (msg.get("chat") or {}).get("id")
             text = msg.get("text") or ""

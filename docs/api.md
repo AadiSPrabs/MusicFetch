@@ -45,17 +45,25 @@ Candidate shape:
 
 ```json
 {
-  "source": "jiosaavn",          // jiosaavn | youtube_music — routes the download
-  "track_id": "6uEI9gj0",        // jiosaavn song id / yt video id
+  "source": "jiosaavn",          // jiosaavn | youtube_music | qbit — routes the download
+  "track_id": "6uEI9gj0",        // jiosaavn song id / yt video id / apibay torrent id
   "artist": "LiSA",
   "title": "ADAMAS",
   "album": "ASCA THE GREATEST",
   "duration": 231,
-  "quality": "AAC 320",          // "AAC 320" | "AAC 160" | "AAC ~128"
+  "quality": "FLAC (lossless)",  // "FLAC (lossless)" | "AAC 320" | "AAC 160" | "AAC ~128"
   "plays": "1234567",
   "year": 2018,
-  "cover_url": "https://..."
+  "cover_url": "https://...",
+  "seeders": 122,                // qbit only — torrent health (higher = more reliable)
+  "size_mb": 325.1               // qbit only — album pack size
 }
+```
+
+qbit (FLAC) candidates represent an **album pack on the torrent index**, not
+a single song: `artist` is `"?"`, `title` is the pack name, `seeders`/`size_mb`
+tell you its health, and the exact song file is resolved *inside* the pack at
+download time (title + duration match, ±5s gate).
 ```
 
 ## `POST /api/download`
@@ -81,10 +89,19 @@ The `pick` is normally copied verbatim from a search candidate's result.
   "picked": {"source": "jiosaavn", "...": "..."},
   "output": "/mnt/hdd/media/music2test/LiSA/ASCA THE GREATEST/ADAMAS.m4a",
   "format": ".m4a",
-  "meta": {"title": "ADAMAS", "artist": "LiSA", "album": "ASCA THE GREATEST", "tracknumber": "2", "date": "2018", "..." : "..."},
+  "meta": {"title": "ADAMAS", "artist": "LiSA", "album": "ASCA THE GREATEST", "tracknumber": "2", "date": "2018", "...": "..."},
   "lyrics": true,
-  "cover": true
+  "cover": true,
+  "attempts": [
+    {"source": "youtube_music", "status": "failed", "error": "HTTP Error 403: Forbidden"},
+    {"source": "qbit", "status": "ok", "note": "FLAC fallback", "pack": "LiSA — ADAMAS (2018) [FLAC]"}
+  ]
 }
+```
+
+`attempts` is the delivery trail (1 entry on a direct hit; 2+ when a lossy
+source failed and a higher-quality tier grabbed it). `format` reflects what
+was actually delivered (`.m4a`, `.flac`, …).
 ```
 
 ## `POST /api/resolve`

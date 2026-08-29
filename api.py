@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from engines import EngineError, get_engine  # noqa: E402
+from engines import EngineError, get_engine, MultiEngine  # noqa: E402
 from engines.youtube_music import YoutubeMusicEngine  # noqa: E402
 from naming import target_path  # noqa: E402
 from postprocess import PostProcessor  # noqa: E402
@@ -65,6 +65,59 @@ def _resolve_url(url: str) -> tuple[dict, dict]:
     return d, pl
 
 
+def _qbit_engine():
+    engs = engine.engines if isinstance(engine, MultiEngine) else [engine]
+    for e in engs:
+        if getattr(e, "name", None) == "qbit":
+            return e
+    return None
+
+
+def _download_with_failover(pick: dict) -> tuple:
+    """engine.download(pick); on failure automatically falls back to the qbit
+    FLAC (torrent) tier. Returns (local_path, attempts_trail) — the trail lets
+    the caller report exactly what happened (lossy fail -> FLAC fallback).
+
+    The fallback reuses the failed pick's song title + real duration: qbit
+    locates the packed album on the torrent index, then matches the exact song
+    file inside it by title AND verifies duration against the reference (±5s).
+    """
+    attempts = []
+    src = pick.get("source")
+    try:
+        local = engine.download(pick)
+        attempts.append({"source": src, "status": "ok"})
+        return local, attempts
+    except Exception as exc:
+        attempts.append({"source": src, "status": "failed", "error": str(exc)})
+        qbit = _qbit_engine()
+        if qbit is not None and src != "qbit":
+            # no 'flac' suffix here — qbit.search() handles the flac-bias +
+            # plain fallback so the query isn't over-constrained.
+            q = f"{pick.get('artist', '')} {pick.get('title', '')}".strip()
+            try:
+                cands = qbit.search(q, limit=8)
+                if not cands:
+                    raise EngineError(f"no FLAC pack on torrent index for '{q}'")
+                best = cands[0]  # search() returns healthiest (most seeders) first
+                fp = dict(pick)
+                fp.update(
+                    source="qbit",
+                    track_id=best["track_id"],      # apibay torrent id
+                    info_hash=best["info_hash"],    # for the magnet
+                    title=pick.get("title"),        # SONG title -> in-pack file match
+                    album=best["title"],            # pack/album name
+                )
+                local = qbit.download(fp)
+                attempts.append({"source": "qbit", "status": "ok",
+                                 "note": "FLAC fallback", "pack": best["title"]})
+                return local, attempts
+            except Exception as fex:
+                attempts.append({"source": "qbit", "status": "failed",
+                                 "error": str(fex)})
+        raise
+
+
 def _download_one(pick: dict, query: str, album_hint: str = "",
                   tracknumber: int | None = None, force_album: str = "",
                   dir_artist: str | None = None) -> dict:
@@ -77,7 +130,7 @@ def _download_one(pick: dict, query: str, album_hint: str = "",
     dir_artist: album-artist override for the directory only (album stays
     together under one artist folder while track artist tags stay true).
     """
-    local = engine.download(pick)  # Path to the downloaded audio file
+    local, attempts = _download_with_failover(pick)  # Path to downloaded audio
     meta = engine.meta(local, pick, query)
     if force_album:
         meta["album"] = force_album
@@ -122,6 +175,7 @@ def _download_one(pick: dict, query: str, album_hint: str = "",
         "meta": {k: v for k, v in meta.items() if v and k != "unknown_album"},
         "lyrics": bool(lyrics and (lyrics.get("synced") or lyrics.get("plain"))),
         "cover": cover is not None,
+        "attempts": attempts,
     }
 
 

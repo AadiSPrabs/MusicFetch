@@ -3,22 +3,22 @@
 Search, download, tag, and organize **single songs — or entire albums and
 playlists** — into a Jellyfin-ready library, controlled from **Telegram** and
 a **REST API**. Self-hosted, no accounts, no ads — just pick a track or
-paste a link and it lands on disk as `Artist/Album/Song.m4a` with proper
-metadata, embedded cover art, and lyrics.
+paste a link and it lands on disk as `Artist/Album/Song.m4a` (or `.flac`
+when a lossless rip is used) with proper metadata, embedded cover art, and lyrics.
 
 ```
-search / paste a link
-        │
-        ▼
 ┌─────────────────┐   ┌──────────────────────┐   ┌─────────────────────┐
 │   MultiEngine   │   │  PostProcessor       │   │  Library            │
 │  jiosaavn (320) │──►│  MusicBrainz metadata│──►│ /Artist/Album/      │
 │  youtube_music  │   │  LRCLIB lyrics       │   │   Song.m4a + .lrc   │
 │  (~128 AAC)     │   │  cover embed         │   │   folder.jpg        │
-└─────────────────┘   └──────────────────────┘   └─────────────────────┘
-        │                                                │
+│  qbit (FLAC*)   │   └──────────────────────┘   └─────────────────────┘
+└─────────────────┘
+        │
         └── controlled by: Telegram bot ◄──┘
                            REST API (127.0.0.1:8090)
+
+* FLAC tier via local qBittorrent + public trackers — live.
 ```
 
 ## What it is
@@ -26,9 +26,14 @@ search / paste a link
 MusicFetch is a Lidarr-style service: **any track — a single song or a whole
 album/playlist — downloaded in full, tagged correctly, filed correctly.**
 
-- **Dual engine search** — results from JioSaavn (320 kbps AAC, no auth) and
-  YouTube Music (yt-dlp, ~128 kbps AAC) are merged into one list; each
-  candidate is tagged with its source and downloads route automatically.
+- **Three-tier, quality-priority search** — `engine.order` (edit in
+  `config.yaml`, then restart the API) decides the order. Default is
+  **FLAC** (lossless via local qBittorrent + public trackers) → **JioSaavn**
+  (320 kbps AAC, no auth) → **YouTube Music** (yt-dlp, ~128 kbps AAC). All
+  sources are merged into one list; each candidate is tagged with its source
+  + quality and downloads route automatically. If a lossy source **fails** to
+  download, MusicFetch **fails over to a higher-quality tier** automatically —
+  see [docs/engines.md](docs/engines.md).
 - **Paste-a-link ingestion** — drop in a YouTube, YouTube Music, or Spotify
   link (single track, album, or playlist) and MusicFetch resolves it, matches
   every track to the clean studio version, and downloads everything.
@@ -40,7 +45,7 @@ album/playlist — downloaded in full, tagged correctly, filed correctly.**
 - **Two control surfaces** — a Telegram bot (search → pick → download → the
   file is also sent back to you) and a REST API for anything else.
 - **Zero accounts** — JioSaavn's public API and YouTube Music need no login.
-  (Lossless FLAC is a future track; see [docs/engines.md](docs/engines.md).)
+  (Lossless FLAC: live via torrents — [docs/engines.md](docs/engines.md).)
 
 ## What it's made of
 
@@ -54,7 +59,8 @@ musicfetch/
 ├── engines/
 │   ├── __init__.py     # engine registry + MultiEngine (merge/routing)
 │   ├── jiosaavn.py     # JioSaavn engine (320 kbps AAC)
-│   └── youtube_music.py# YouTube Music engine (yt-dlp)
+│   ├── youtube_music.py# YouTube Music engine (yt-dlp)
+│   └── qbit.py         # FLAC tier via local qBittorrent (lossless)
 ├── tools/
 │   └── tgbot.py        # Telegram bot (stdlib-only long-poll)
 └── config.yaml         # everything: engine order, output dir, API key, bot token
@@ -100,7 +106,7 @@ All configuration lives in one `config.yaml` (template: `config.example.yaml`):
 
 | Key | Meaning |
 |---|---|
-| `engine.order` | Download-source priority, e.g. `[jiosaavn, youtube_music]` |
+| `engine.order` | **Quality priority** — edit to reorder sources (FLAC-first default `[qbit, jiosaavn, youtube_music]`). Restart the API to apply |
 | `output.root` | **Change this first** — where downloads land: `{root}/{Artist}/{Album}/{Song}.m4a` |
 | `postprocess.*` | Toggles for MusicBrainz / lyrics / cover steps |
 | `api.host` / `api.port` | REST bind address (localhost by default) |
@@ -127,12 +133,17 @@ Then in chat:
 
 - **Paste a link** — YouTube / YouTube Music / Spotify track, album, or
   playlist. MusicFetch resolves it and downloads everything.
-- `search <query>` — find tracks across both engines
-- `download N` — grab result N from the last search
+- `search <query>` — find tracks across all three engines
+- **Tap a result button** to download it (or reply `download N`)
 - `/status` — queue state
 - `/help` — this
 
-Single tracks are also sent back to you as an audio message after they land.
+Each result carries a **quality badge** — `[FLAC]`, `[JS 320]`, `[YT 128]` —
+and torrent picks show health (`🌱 seeders · sizeMB`). On success the bot
+reports the **actual delivered format** (e.g. `FLAC 44.1kHz/16bit` or
+`AAC 129k`, read from the real file), plus a **fallback trail** when a lossy
+source failed and a higher-quality tier grabbed it instead. Single tracks are
+also sent back to you as an audio message after they land.
 
 ### REST API (no bot needed)
 
@@ -167,10 +178,10 @@ Full endpoint reference: [docs/api.md](docs/api.md).
 
 ## Status / roadmap
 
-- ✅ Search + download + tagging pipeline (JioSaavn 320 kbps AAC + YT Music)
+- ✅ Search + download + tagging pipeline (FLAC lossless + JioSaavn 320 kbps AAC + YT Music)
+- ✅ Lossless FLAC tier (torrent-based via local qBittorrent) + automatic download failover
 - ✅ Link ingestion: Spotify (track/album/playlist), YouTube (track/playlist)
-- ✅ Telegram bot + REST API + serial job queue
-- ⏳ Lossless FLAC source (research track — torrent-based, not soulseek)
+- ✅ Telegram bot + REST API + serial job queue (tap-to-download buttons, quality badges, honest delivery report)
 - ⏳ Optional: album-artist multi-disc handling, watch-folder triggers
 
 ## Disclaimer

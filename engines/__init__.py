@@ -21,6 +21,10 @@ def _build(cfg: dict, name: str):
         from .youtube_music import YoutubeMusicEngine
 
         return YoutubeMusicEngine(cfg)
+    if name == "qbit":
+        from .qbit import QbitEngine
+
+        return QbitEngine(cfg)
     raise EngineError(f"unknown engine: {name}")
 
 

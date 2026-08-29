@@ -1,8 +1,12 @@
 # MusicFetch configuration
 # Copy to config.yaml and adjust. config.yaml is gitignored (it holds secrets).
 
-# Engine order: jiosaavn first (public API, no auth, 320kbps AAC full-length),
-# youtube_music fallback (yt-dlp, ~128kbps AAC, covers JP/niche/regional).
+# Engine order = QUALITY PRIORITY. Search lists sources top-to-bottom in this
+# order and tries the highest-quality tier first. Default favours lossless:
+#   qbit (FLAC) -> jiosaavn (320k AAC) -> youtube_music (~128k AAC)
+# Reorder freely (or drop a source) to suit your preference, then restart the
+# API service. A lossy source that FAILS to download falls back automatically
+# (failover to a higher-priority tier).
 
 jiosaavn:
   # scratch space during download, auto-created — safe to leave as-is
@@ -11,8 +15,16 @@ jiosaavn:
 youtube_music:
   staging_dir: /opt/musicfetch/staging
 
+qbit:
+  # FLAC tier — lossless CD rips via local qBittorrent + public trackers.
+  url: http://127.0.0.1:1340
+  username: qbittorrent
+  password: ""            # WebUI password (this file is the template; real one in gitignored config.yaml)
+  category: musicfetch
+  staging_dir: /opt/musicfetch/staging
+
 engine:
-  order: [jiosaavn, youtube_music]
+  order: [qbit, jiosaavn, youtube_music]
 
 output:
   # ★ CHANGE THIS FIRST — where finished songs land.
