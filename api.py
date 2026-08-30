@@ -37,7 +37,7 @@ from engines.youtube_music import YoutubeMusicEngine  # noqa: E402
 from naming import target_path  # noqa: E402
 from postprocess import PostProcessor  # noqa: E402
 from jobqueue import Queue  # noqa: E402
-from resolvers import detect, match, spotify_tracklist, youtube_tracklist  # noqa: E402
+from resolvers import detect, match, match_with_rescue, spotify_tracklist, youtube_tracklist  # noqa: E402
 
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
 with open(CFG_PATH, encoding="utf-8") as fh:
@@ -73,6 +73,15 @@ def _qbit_engine():
     return None
 
 
+def _jio_engine():
+    """JioSaavn engine (rescuer for Spotify tracks with no YT match)."""
+    engs = engine.engines if isinstance(engine, MultiEngine) else [engine]
+    for e in engs:
+        if getattr(e, "name", None) == "jiosaavn":
+            return e
+    return None
+
+
 def _download_with_failover(pick: dict) -> tuple:
     """engine.download(pick); on failure automatically falls back to the qbit
     FLAC (torrent) tier. Returns (local_path, attempts_trail) — the trail lets
@@ -91,10 +100,13 @@ def _download_with_failover(pick: dict) -> tuple:
     except Exception as exc:
         attempts.append({"source": src, "status": "failed", "error": str(exc)})
         qbit = _qbit_engine()
-        if qbit is not None and src != "qbit":
-            # no 'flac' suffix here — qbit.search() handles the flac-bias +
-            # plain fallback so the query isn't over-constrained.
-            q = f"{pick.get('artist', '')} {pick.get('title', '')}".strip()
+        # Only attempt the FLAC fallback when we actually have a song identity
+        # to search the torrent index with. An empty query (dead-video link,
+        # metadata fetch failed -> video_pick degraded to title/artist "") just
+        # returns the index's most-seeded albums at random and can never match —
+        # skip it rather than burn calls on nonsense (2026-08-30).
+        q = f"{pick.get('artist', '')} {pick.get('title', '')}".strip()
+        if qbit is not None and src != "qbit" and q:
             try:
                 cands = qbit.search(q, limit=8)
                 if not cands:
@@ -194,7 +206,9 @@ def run_job(payload: dict) -> dict:
             return {"kind": "track", "source": "youtube",
                     "name": pick.get("title") or d["id"], "pick": pick}
         for t in pl["tracks"]:
-            t["pick"] = match(ytm, t, authoritative_duration=(d["source"] == "spotify"))
+            t["pick"] = match_with_rescue(ytm, t,
+                                          authoritative_duration=(d["source"] == "spotify"),
+                                          jio=_jio_engine())
         matched = sum(1 for t in pl["tracks"] if t.get("pick"))
         return {"kind": d["kind"], "source": d["source"], "name": pl["name"],
                 "tracks": pl["tracks"], "total": len(pl["tracks"]), "matched": matched}
@@ -202,8 +216,18 @@ def run_job(payload: dict) -> dict:
     if kind == "playlist":
         d, pl = _resolve_url(payload["url"])
         if d["kind"] == "track" and d["source"] == "youtube":
-            # a single-link paste -> just download it
+            # a single-link paste -> just download it. If the video's metadata
+            # fetch failed (video removed/private/region-blocked), video_pick
+            # degraded to an empty title — there's nothing to search any engine
+            # with, so fail clearly instead of a doomed download + pointless
+            # FLAC attempt that surfaces the raw youtube error (2026-08-30).
             pick = ytm.video_pick(d["id"])
+            if not (pick.get("title") or "").strip():
+                raise EngineError(
+                    "this YouTube video is unavailable (removed/private/"
+                    "region-blocked) and no song title could be fetched — so "
+                    "there is nothing to search the FLAC index with. Paste a "
+                    "Spotify/song link or search by name instead.")
             return _download_one(pick, pick.get("title") or d["id"])
         # Album links (YT Music OLAK album auto-playlists, Spotify albums)
         # mean every track belongs to ONE album: force the album tag and keep
@@ -219,8 +243,11 @@ def run_job(payload: dict) -> dict:
             if counts:
                 dir_artist = counts.most_common(1)[0][0]
         outputs, errors = [], []
+        jio = _jio_engine()
         for i, t in enumerate(pl["tracks"], 1):
-            pick = t.get("pick") or match(ytm, t, authoritative_duration=(d["source"] == "spotify"))
+            pick = t.get("pick") or match_with_rescue(ytm, t,
+                                                       authoritative_duration=(d["source"] == "spotify"),
+                                                       jio=jio)
             if not pick:
                 errors.append({"track": f"{t['artist']} - {t['title']}", "error": "no match"})
                 continue

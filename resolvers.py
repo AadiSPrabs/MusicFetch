@@ -257,16 +257,31 @@ def match(ytm_engine, track: dict, authoritative_duration: bool) -> dict | None:
     ref = int(track.get("duration") or 0)
     if authoritative_duration:
         if ref:
-            # Prefer the closest candidate that shares a title token with the
-            # reference — same-duration wrong songs tie min-diff at 0s (One
-            # Last Time for "hate that i made you love me", the Spanish
-            # "Lo Arriesgo Todo" for "Risk It All"). Only when nothing
-            # overlaps (JP romaji/kanji mismatch) fall back to plain min-diff.
+            # Prefer a candidate that shares a title token with the reference —
+            # same-duration wrong songs tie min-diff at 0s (One Last Time for
+            # "hate that i made you love me", the Spanish "Lo Arriesgo Todo" for
+            # "Risk It All").
             overlap = [c for c in cands if _title_overlap(c.get("title") or "", track.get("title") or "")]
-            pool = overlap if overlap else cands
-            best = min(pool, key=lambda c: abs((c.get("duration") or 0) - ref))
-            if abs((best.get("duration") or 0) - ref) > 45:
-                best = cands[0]  # true track absent — top survivor is least-bad
+            if overlap:
+                best = min(overlap, key=lambda c: abs((c.get("duration") or 0) - ref))
+                # Spotify album durations are exact album masters — a title-
+                # matching candidate more than 45s off means the true track is
+                # ABSENT from the pool, not slightly off: report a gap rather
+                # than substitute (2026-08-30).
+                if abs((best.get("duration") or 0) - ref) > 45:
+                    return None
+            else:
+                # No candidate shares a title token (JP romaji/kanji, or the
+                # track is missing). Spotify durations are exact album masters,
+                # so a same-artist DIFFERENT song (Pharrell's "Happy"/"Angel"
+                # for "Freedom") can be loosely duration-close and slip past a
+                # wide gate. Only trust a title-less match when essentially EXACT
+                # (±10s); otherwise report a gap so the track can be fetched by
+                # name from the other engines instead of silently propping the
+                # wrong song into the library (2026-08-30).
+                best = min(cands, key=lambda c: abs((c.get("duration") or 0) - ref))
+                if abs((best.get("duration") or 0) - ref) > 10:
+                    return None
         else:
             best = cands[0]
     else:
@@ -294,5 +309,67 @@ def match(ytm_engine, track: dict, authoritative_duration: bool) -> dict | None:
             else:
                 near = [c for c in cands if abs((c.get("duration") or 0) - ref) <= 25]
                 best = near[0] if near else cands[0]
+    # Same-artist, different-song guard (2026-08-30): a candidate that shares
+    # NO title token with the reference AND is implausibly far in duration is
+    # a DIFFERENT track (e.g. Pharrell's "Happy" for his "Freedom"), not the
+    # track we were asked for. Report a gap instead of downloading the wrong
+    # song. Real matches — including JP romaji/kanji mismatches and CLiP-
+    # extended ref lengths — stay within 60s or overlap in title, so this only
+    # fires on genuine substitution. (Authoritative refs already return None
+    # above at >45s; this catches the ranking-first non-authoritative paths.)
+    if abs((best.get("duration") or 0) - ref) > 60 and not _title_overlap(
+            best.get("title") or "", track.get("title") or ""):
+        return None
     best["query"] = q
     return best
+
+
+def _jiosaavn_rescue(jio, track: dict) -> dict | None:
+    """Spotify [(authoritative) track with NO YouTube Music match -> try the
+    exact song on JioSaavn. STRICT by design — a pasted Spotify track must land
+    on the real track, not a JioSaavn cover: candidate must share an artist
+    token AND a title token AND (when the ref has a duration) be within ±45s of
+    the authoritative album duration. Version-markered candidates (cover/live/
+    instrumental/remix/karaoke/tv/radio) are rejected unless the ref itself is
+    marked. Returns a pick (source='jiosaavn') or None (-> honest gap). Added
+    2026-08-30 as the rescue behind match() — only reached when YT has no match,
+    so it never overrides a clean YT pick."""
+    title = (track.get("title") or "").strip()
+    artist = (track.get("artist") or "").strip()
+    q = f"{artist} {title}".strip()
+    if not title:
+        return None
+    ref = int(track.get("duration") or 0)
+    want_marked = bool(_VERSION_MARKERS.search(title.lower()))
+    try:
+        cands = jio.search(q, limit=10)
+    except Exception:
+        return None
+    for c in cands:
+        if not _artist_ok(c.get("artist") or "", artist):
+            continue
+        if not _title_overlap(c.get("title") or "", title):
+            continue
+        if not want_marked and _VERSION_MARKERS.search((c.get("title") or "").lower()):
+            continue
+        if ref and abs(int(c.get("duration") or 0) - ref) > 45:
+            continue
+        c = dict(c)
+        c.setdefault("query", q)
+        c["source"] = "jiosaavn"
+        return c
+    return None
+
+
+def match_with_rescue(ytm_engine, track: dict, authoritative_duration: bool,
+                      jio=None) -> dict | None:
+    """match() plus a JioSaavn rescue: when a Spotify (authoritative) track has
+    NO clean YT Music match, try the exact song on JioSaavn so the album/single
+    link still lands instead of gapping. Non-authoritative (YT) refs never
+    rescue — only the exact-title Spotify cases, and only on a strict hit."""
+    p = match(ytm_engine, track, authoritative_duration)
+    if p is not None:
+        return p
+    if authoritative_duration and jio is not None:
+        return _jiosaavn_rescue(jio, track)
+    return None
