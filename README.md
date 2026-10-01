@@ -132,7 +132,9 @@ already have a bot, make one in two minutes:
 Then in chat:
 
 - **Paste a link** — YouTube / YouTube Music / Spotify track, album, or
-  playlist. MusicFetch resolves it and downloads everything.
+  playlist. A **single track** asks which quality first (same picker as below,
+  with the link's own source always on the list); an **album or playlist**
+  downloads everything in one go.
 - `search <query>` — find tracks across all three engines
 - **Tap a result button** to download it (or reply `download N`). When the track
   exists in more than one source the bot first asks **which quality** —
@@ -155,6 +157,14 @@ are tolerated (`… - Get Lucky (Single) FLAC 24-96` pairs with
 `Get Lucky (feat. …)`), variants are not; and qbit re-verifies the track inside
 a torrent by title + duration at download time, so a mis-grouped pick fails
 cleanly rather than filing the wrong file.
+
+A pasted **single-track** link uses the same picker: the link is resolved, the
+track is searched across all engines, and you're offered every source that has
+it — with the link's own source always one of the buttons, so picking it is the
+old download-the-link behaviour. (Without this a pasted link went straight
+through its own engine, which for a YouTube Music link meant ~128 kbps even when
+a 320 kbps or FLAC source existed.) Albums and playlists still download in one
+go, at the best available tier, with failover.
 
 ### REST API (no bot needed)
 

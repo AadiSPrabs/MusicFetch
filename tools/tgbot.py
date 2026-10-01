@@ -221,6 +221,28 @@ def _same_track(a: dict, b: dict) -> bool:
     return _artist_ok(a, b)
 
 
+def _cluster(cands: list[dict]) -> tuple[list[dict[str, dict]], dict[int, int]]:
+    """Group candidates into "same track, different source" clusters.
+
+    Returns the clusters plus an id(candidate) -> cluster index map. Shared by the
+    search flow and the single-track-link flow so both offer identical options.
+    """
+    groups: list[dict[str, dict]] = []
+    gid: dict[int, int] = {}
+    for c in cands:
+        if not c.get("source"):
+            continue
+        for i, g in enumerate(groups):
+            if _same_track(c, next(iter(g.values()))):
+                g.setdefault(str(c["source"]), c)
+                gid[id(c)] = i
+                break
+        else:
+            gid[id(c)] = len(groups)
+            groups.append({str(c["source"]): c})
+    return groups, gid
+
+
 def _qbtn(c: dict) -> str:
     """Picker button label: quality badge (+ seeders for torrents)."""
     src = c.get("source")
@@ -301,19 +323,7 @@ def flow_search(chat: int, query: str):
     # 24-96") — an exact key never pairs them. A loose match is safe because qbit
     # re-verifies the track inside the pack by title+duration at download time, so
     # the worst case is a clean "no match in pack" error, never a wrong file.
-    groups: list[dict[str, dict]] = []
-    gid: dict[int, int] = {}  # id(candidate) -> index into groups
-    for c in cands:
-        if not c.get("source"):
-            continue
-        for i, g in enumerate(groups):
-            if _same_track(c, next(iter(g.values()))):
-                g.setdefault(str(c["source"]), c)
-                gid[id(c)] = i
-                break
-        else:
-            gid[id(c)] = len(groups)
-            groups.append({str(c["source"]): c})
+    groups, gid = _cluster(cands)
     seen, n = set(), 0
     lines = ["<b>Results</b> — <i>tap a button to download</i> (or reply <code>download N</code>):"]
     store, alts, rows = {}, {}, []
@@ -392,7 +402,53 @@ def _do_download(chat: int, pick: dict):
 
 
 def flow_link(chat: int, url: str):
+    """A pasted link. A single track asks which quality; albums/playlists just download."""
     say(chat, f"🔗 resolving <i>{html.escape(url)}</i> — queued…")
+    jid = None
+    try:
+        jid = api("/api/resolve", {"url": url})["job_id"]
+    except Exception:
+        jid = None
+    if jid:
+        j = poll_job(jid, cap=180)
+        r = j.get("result") or {}
+        if j.get("status") == "done" and r.get("kind") == "track" and r.get("pick"):
+            offer_link_quality(chat, url, r["pick"])
+            return
+    _link_download(chat, url)
+
+
+def offer_link_quality(chat: int, url: str, pick: dict):
+    """Offer the sources that actually hold this track. The pasted link's own
+    pick is always on the list, so tapping it is the old download-the-link path."""
+    art = str(pick.get("artist") or "").strip()
+    tit = str(pick.get("title") or "").strip()
+    q = f"{art} {tit}".strip()
+    opts: dict[str, dict] = {}
+    if q:
+        say(chat, "🔎 checking which sources have this track…")
+        try:
+            jid = api("/api/search", {"query": q})["job_id"]
+            j = poll_job(jid, cap=120)
+            cands = (j.get("result") or {}).get("candidates") or []
+        except Exception:
+            cands = []
+        groups, _ = _cluster(cands)
+        hit = next((g for g in groups if any(_same_track(c, pick) for c in g.values())), None)
+        opts = dict(hit or {})
+    opts[str(pick.get("source") or "link")] = pick  # the link's own source wins
+    if len(opts) < 2:  # nothing to choose — download the link as before
+        _link_download(chat, url)
+        return
+    _alts[chat] = {**_alts.get(chat, {}), 0: opts}  # slot 0 = "this pasted link"
+    head = f"{html.escape(art)} — {html.escape(tit)}" if art else html.escape(tit or "track")
+    dur = f" ({fmt_dur(pick.get('duration'))})" if pick.get("duration") else ""
+    rows = [[{"text": _qbtn(c), "callback_data": f"q:0:{s}"} for s, c in opts.items()]]
+    say(chat, f"🎚 <b>Choose quality</b> — {head}{dur}",
+        reply_markup=json.dumps({"inline_keyboard": rows}))
+
+
+def _link_download(chat: int, url: str):
     try:
         jid = api("/api/playlist", {"url": url})["job_id"]
     except Exception as exc:
@@ -473,8 +529,8 @@ def flow_status(chat: int):
 
 HELP = (
     "<b>MusicFetch</b> 🎵\n\n"
-    "• Paste a YouTube / YouTube Music / Spotify link (track, album or playlist) — "
-    "I resolve and download everything.\n"
+    "• Paste a YouTube / YouTube Music / Spotify link — a single track asks which "
+    "quality first; an album/playlist downloads everything.\n"
     "• <code>search &lt;query&gt;</code> — find tracks\n"
     "• <code>download N</code> — grab result N from the last search\n"
     "• tapping a result shows its available qualities (FLAC / 320 / 128) — pick one\n"
