@@ -43,6 +43,7 @@ _LINK_RE = re.compile(
 _ERR_RE = re.compile(r"^(?:error|failed):?\s*(.*)$", re.I)
 
 _picks: dict[int, dict[int, dict]] = {}  # chat_id -> {n: pick}
+_alts: dict[int, dict[int, dict[str, dict]]] = {}  # chat_id -> {n: {source: candidate}}
 
 
 def tg(method: str, **params) -> dict:
@@ -153,6 +154,82 @@ def _btn(p: dict, n: int) -> str:
     return f"{n}. {(p.get('artist') or '?')} — {p.get('title') or '?'}"[:64]
 
 
+def _cand_key(c: dict) -> tuple[str, str]:
+    """Exact key — used only to dedupe the displayed result list."""
+    return ((c.get("artist") or "").lower().strip(), (c.get("title") or "").lower().strip())
+
+
+_JUNK = {
+    "feat", "feats", "ft", "with", "official", "audio", "video", "lyrics", "lyric",
+    "hd", "hq", "flac", "mp3", "aac", "m4a", "opus", "wav", "320", "160", "128",
+    "24bit", "16bit", "khz", "bit", "cd", "rip", "web", "webrip", "hdtv", "vinyl",
+    "single", "album", "ep", "remaster", "remastered", "deluxe", "edition",
+    "explicit", "clean", "the", "a", "an", "and", "of", "to",
+}
+
+
+def _tokens(s) -> set[str]:
+    """Lowercased word tokens, brackets + release/codec noise removed."""
+    s = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", str(s or "").lower())
+    return {w for w in re.findall(r"[a-z0-9]+", s) if len(w) > 1 and w not in _JUNK}
+
+
+def _raw_tokens(s) -> set[str]:
+    """Tokens from the RAW string, brackets kept — that's where variant markers
+    live ("Get Lucky (Radio Edit)", "… (Daft Punk Remix)")."""
+    return {w for w in re.findall(r"[a-z0-9]+", str(s or "").lower()) if len(w) > 1}
+
+
+_VARIANTS = {
+    "remix", "rmx", "live", "acoustic", "instrumental", "karaoke", "cover", "radio",
+    "edit", "extended", "mix", "mixed", "demo", "reprise", "sped", "slowed",
+    "nightcore", "orchestral", "piano", "reverb", "mashup", "bootleg", "refix",
+    "flip", "8d",
+}
+
+
+def _artist_ok(a: dict, b: dict) -> bool:
+    """Artist agreement, tolerating torrent rows (which carry no artist field):
+    when one side is artistless, look for the other's artist tokens inside its
+    release name — that's what keeps a cover by someone else from grouping."""
+    aa, ab = _tokens(a.get("artist")), _tokens(b.get("artist"))
+    if aa and ab:
+        return bool(aa & ab)
+    if aa:
+        return bool(aa & _tokens(b.get("title")))
+    if ab:
+        return bool(ab & _tokens(a.get("title")))
+    return True
+
+
+def _same_track(a: dict, b: dict) -> bool:
+    """Loose same-track test: strong title-token overlap, IDENTICAL variant
+    markers (a remix/live/cover/radio-edit must never pair with the original —
+    storefront picks are used verbatim, so a wrong pair would silently file the
+    wrong recording), and artist agreement."""
+    ta, tb = _tokens(a.get("title")), _tokens(b.get("title"))
+    if not ta or not tb:
+        return False
+    if (_raw_tokens(a.get("title")) & _VARIANTS) != (_raw_tokens(b.get("title")) & _VARIANTS):
+        return False
+    inter = ta & tb
+    ok = len(inter) >= 2 and len(inter) / min(len(ta), len(tb)) >= 0.5
+    if not ok and len(inter) == 1 and min(len(ta), len(tb)) == 1:
+        ok = True  # one-word title ("Happy") vs a long release name — that token is all we have
+    if not ok:
+        return False
+    return _artist_ok(a, b)
+
+
+def _qbtn(c: dict) -> str:
+    """Picker button label: quality badge (+ seeders for torrents)."""
+    src = c.get("source")
+    label = _BADGES.get(src, f"[{html.escape(str(src or '?'))}]")
+    if src == "qbit" and c.get("seeders") is not None:
+        label += f" {c['seeders']}🌱"
+    return label
+
+
 def probe(path) -> str:
     """Honest, compact quality summary of the delivered file (ffprobe)."""
     try:
@@ -217,30 +294,66 @@ def flow_search(chat: int, query: str):
     if j["status"] != "done" or not (j.get("result") or {}).get("candidates"):
         say(chat, f"❌ no results for <i>{html.escape(query)}</i>")
         return
+    cands = j["result"]["candidates"]
+    # Cluster candidates into "same track, different source" groups. Matching is
+    # deliberately tolerant: storefront rows are clean ("Get Lucky (feat. X)") while
+    # torrent rows are release names ("Daft Punk feat. X - Get Lucky (Single) FLAC
+    # 24-96") — an exact key never pairs them. A loose match is safe because qbit
+    # re-verifies the track inside the pack by title+duration at download time, so
+    # the worst case is a clean "no match in pack" error, never a wrong file.
+    groups: list[dict[str, dict]] = []
+    gid: dict[int, int] = {}  # id(candidate) -> index into groups
+    for c in cands:
+        if not c.get("source"):
+            continue
+        for i, g in enumerate(groups):
+            if _same_track(c, next(iter(g.values()))):
+                g.setdefault(str(c["source"]), c)
+                gid[id(c)] = i
+                break
+        else:
+            gid[id(c)] = len(groups)
+            groups.append({str(c["source"]): c})
     seen, n = set(), 0
     lines = ["<b>Results</b> — <i>tap a button to download</i> (or reply <code>download N</code>):"]
-    store = {}
-    rows = []
-    for c in j["result"]["candidates"][:15]:
-        key = ((c.get("artist") or "").lower(), (c.get("title") or "").lower())
+    store, alts, rows = {}, {}, []
+    for c in cands[:15]:
+        key = _cand_key(c)
         if key in seen:
             continue
         seen.add(key)
         n += 1
         store[n] = c
+        alts[n] = groups[gid[id(c)]] if id(c) in gid else {str(c.get("source") or "?"): c}
         lines.append(f"{n}. {fmt_pick(c)}")
         rows.append([{"text": _btn(c, n), "callback_data": f"dl:{n}"}])
         if n >= 12:
             break
     _picks[chat] = store
+    _alts[chat] = alts
     say(chat, "\n".join(lines), reply_markup=json.dumps({"inline_keyboard": rows}))
 
 
 def flow_download(chat: int, n: int):
+    """A tapped result: offer the qualities it's actually available in, else download."""
     pick = (_picks.get(chat) or {}).get(n)
     if not pick:
         say(chat, "❌ no search results in this chat — search first")
         return
+    opts = list(((_alts.get(chat) or {}).get(n) or {}).values())
+    if len(opts) < 2:  # single source — nothing to choose, don't add a tap
+        _do_download(chat, pick)
+        return
+    art = str(pick.get("artist") or "").strip()
+    tit = str(pick.get("title") or "?").strip()
+    head = f"{html.escape(art)} — {html.escape(tit)}" if art and art != "?" else html.escape(tit)
+    dur = f" ({fmt_dur(pick.get('duration'))})" if pick.get("duration") else ""
+    rows = [[{"text": _qbtn(c), "callback_data": f"q:{n}:{c.get('source')}"} for c in opts]]
+    say(chat, f"🎚 <b>Choose quality</b> — {head}{dur}",
+        reply_markup=json.dumps({"inline_keyboard": rows}))
+
+
+def _do_download(chat: int, pick: dict):
     q = f"{pick.get('artist', '')} {pick.get('title', '')}".strip()
     say(chat, f"⬇️ downloading {fmt_pick(pick)}…")
     try:
@@ -364,6 +477,7 @@ HELP = (
     "I resolve and download everything.\n"
     "• <code>search &lt;query&gt;</code> — find tracks\n"
     "• <code>download N</code> — grab result N from the last search\n"
+    "• tapping a result shows its available qualities (FLAC / 320 / 128) — pick one\n"
     "• <code>/status</code> — queue state\n"
     "• <code>/help</code> — this\n\n"
     "Files land in the Jellyfin library; single tracks are also sent here as audio."
@@ -427,6 +541,16 @@ def main():
                     threading.Thread(target=flow_download,
                                       args=(chat_id, int(m.group(1))),
                                       daemon=True).start()
+                    continue
+                m = re.match(r"^q:(\d+):([a-z_]+)$", cq.get("data") or "")
+                if m:
+                    cand = (((_alts.get(chat_id) or {}).get(int(m.group(1))) or {})
+                            .get(m.group(2)))
+                    if not cand:
+                        say(chat_id, "❌ that choice expired — search again")
+                        continue
+                    threading.Thread(target=_do_download, args=(chat_id, cand),
+                                     daemon=True).start()
                 continue
             msg = u.get("message") or {}
             chat_id = (msg.get("chat") or {}).get("id")

@@ -134,7 +134,10 @@ Then in chat:
 - **Paste a link** — YouTube / YouTube Music / Spotify track, album, or
   playlist. MusicFetch resolves it and downloads everything.
 - `search <query>` — find tracks across all three engines
-- **Tap a result button** to download it (or reply `download N`)
+- **Tap a result button** to download it (or reply `download N`). When the track
+  exists in more than one source the bot first asks **which quality** —
+  `[FLAC] 12🌱` · `[JS 320]` · `[YT 128]` — and downloads exactly that pick;
+  a single-source track downloads straight away.
 - `/status` — queue state
 - `/help` — this
 
@@ -144,6 +147,14 @@ reports the **actual delivered format** (e.g. `FLAC 44.1kHz/16bit` or
 `AAC 129k`, read from the real file), plus a **fallback trail** when a lossy
 source failed and a higher-quality tier grabbed it instead. Single tracks are
 also sent back to you as an audio message after they land.
+
+The picker offers only sources that actually hold that track, and it only pairs
+the **same recording** — a remix, radio edit, live take or a cover by another
+artist is never offered as an alternative to the original. Messy release names
+are tolerated (`… - Get Lucky (Single) FLAC 24-96` pairs with
+`Get Lucky (feat. …)`), variants are not; and qbit re-verifies the track inside
+a torrent by title + duration at download time, so a mis-grouped pick fails
+cleanly rather than filing the wrong file.
 
 ### REST API (no bot needed)
 
@@ -181,7 +192,7 @@ Full endpoint reference: [docs/api.md](docs/api.md).
 - ✅ Search + download + tagging pipeline (FLAC lossless + JioSaavn 320 kbps AAC + YT Music)
 - ✅ Lossless FLAC tier (torrent-based via local qBittorrent) + automatic download failover
 - ✅ Link ingestion: Spotify (track/album/playlist), YouTube (track/playlist)
-- ✅ Telegram bot + REST API + serial job queue (tap-to-download buttons, quality badges, honest delivery report)
+- ✅ Telegram bot + REST API + serial job queue (tap-to-download buttons, per-download quality picker, quality badges, honest delivery report)
 - ⏳ Optional: album-artist multi-disc handling, watch-folder triggers
 
 ## Disclaimer
