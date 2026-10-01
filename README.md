@@ -81,7 +81,10 @@ python3 -m venv .venv
 ```
 
 Requirements: Python 3.11+, `ffmpeg` on PATH (used to convert WebP covers to
-JPEG for embedding).
+JPEG for embedding), and a JavaScript runtime on PATH — `node` or `deno` — which
+yt-dlp needs in order to solve YouTube's signature / n-challenge. Without one,
+YouTube extraction still looks like it works but the media URLs it returns
+**403 on download**.
 
 Configure `config.yaml` (see [Configuration](#configuration)), then run:
 

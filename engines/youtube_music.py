@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 from pathlib import Path
 from urllib.parse import quote
 
@@ -121,6 +122,13 @@ class YoutubeMusicEngine:
                 "noplaylist": True, "retries": 3,
                 "format": "140",  # m4a / AAC-LC ~128kbps — keeps the pipeline M4A
                 "outtmpl": str(dest),
+                # YouTube needs a JS runtime + the EJS challenge-solver distribution
+                # to solve the signature / n-challenge. Without them extraction still
+                # "succeeds" but hands back URLs that 403 on the data fetch — the
+                # "unable to download video data: HTTP Error 403" failure. node is
+                # installed here (deno is the other supported runtime).
+                "js_runtimes": {"node": {"path": shutil.which("node")}},
+                "remote_components": ["ejs:github"],
             }
             if client:
                 opts["extractor_args"] = {"youtube": {"player_client": [client]}}

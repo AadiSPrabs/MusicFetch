@@ -168,16 +168,26 @@ _JUNK = {
 }
 
 
+_WORDS = re.compile(r"[^\W_]+", re.UNICODE)  # word chars in ANY script (CJK, Devanagari…)
+
+
 def _tokens(s) -> set[str]:
-    """Lowercased word tokens, brackets + release/codec noise removed."""
+    """Lowercased word tokens, brackets + release/codec noise removed.
+
+    Unicode-aware: a Latin-only `[a-z0-9]+` tokenizer returns an EMPTY set for
+    Japanese/Hindi/Korean titles, which silently disabled grouping for every
+    non-Latin track (two sources of the same song could never pair).
+    """
     s = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", str(s or "").lower())
-    return {w for w in re.findall(r"[a-z0-9]+", s) if len(w) > 1 and w not in _JUNK}
+    return {w for w in _WORDS.findall(s)
+            if (len(w) > 1 or not w.isascii()) and w not in _JUNK}
 
 
 def _raw_tokens(s) -> set[str]:
     """Tokens from the RAW string, brackets kept — that's where variant markers
     live ("Get Lucky (Radio Edit)", "… (Daft Punk Remix)")."""
-    return {w for w in re.findall(r"[a-z0-9]+", str(s or "").lower()) if len(w) > 1}
+    return {w for w in _WORDS.findall(str(s or "").lower())
+            if len(w) > 1 or not w.isascii()}
 
 
 _VARIANTS = {
